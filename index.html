@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>REELATLAS — IMDb Top 1000</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;700&family=Oswald:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cine: {
+                            bg: '#0a0a0c',
+                            surface: '#141417',
+                            border: '#2a2a2d',
+                            text: '#f4f0e6',
+                            textdim: '#a09d96',
+                            accent: '#e53935', // Restrained cinematic red
+                            gold: '#d4af37'
+                        }
+                    },
+                    fontFamily: {
+                        'display': ['Oswald', 'sans-serif'],
+                        'body': ['Inter', 'sans-serif'],
+                        'mono': ['JetBrains Mono', 'monospace'],
+                        'headline': ['Anton', 'sans-serif']
+                    },
+                    backgroundImage: {
+                        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --poster-fallback: #1a1a1d;
+        }
+
+        body {
+            background-color: #0a0a0c;
+            color: #f4f0e6;
+            overflow-x: hidden;
+        }
+
+        /* Subtle Film Grain Overlay */
+        .film-grain {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0.04;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0a0a0c; }
+        ::-webkit-scrollbar-thumb { background: #2a2a2d; }
+        ::-webkit-scrollbar-thumb:hover { background: #e53935; }
+
+        /* Typography & Utilities */
+        .text-shadow-cine { text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
+        .border-cine { border-color: #2a2a2d; }
+        
+        /* Tooltip */
+        #cine-tooltip {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+            background: rgba(10, 10, 12, 0.95);
+            backdrop-filter: blur(8px);
+            border: 1px solid #2a2a2d;
+            color: #f4f0e6;
+            padding: 1rem;
+            max-width: 300px;
+            z-index: 100;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+            transition: opacity 0.2s ease;
+            transform: translate(-50%, 15px); /* Centered below cursor */
+        }
+        #cine-tooltip::before {
+            content: '';
+            position: absolute;
+            top: -6px; left: 50%;
+            transform: translateX(-50%) rotate(45deg);
+            width: 10px; height: 10px;
+            background: rgba(10, 10, 12, 0.95);
+            border-left: 1px solid #2a2a2d;
+            border-top: 1px solid #2a2a2d;
+        }
+
+        /* Camera Viewfinder Elements */
+        .viewfinder-container {
+            position: relative;
+            background: radial-gradient(circle at center, #111 0%, #050505 100%);
+            border: 1px solid #2a2a2d;
+        }
+        .vf-corner {
+            position: absolute;
+            width: 30px; height: 30px;
+            border-color: #e53935;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .vf-tl { top: 20px; left: 20px; border-top: 2px solid; border-left: 2px solid; }
+        .vf-tr { top: 20px; right: 20px; border-top: 2px solid; border-right: 2px solid; }
+        .vf-bl { bottom: 20px; left: 20px; border-bottom: 2px solid; border-left: 2px solid; }
+        .vf-br { bottom: 20px; right: 20px; border-bottom: 2px solid; border-right: 2px solid; }
+        
+        .vf-center {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px; height: 40px;
+            pointer-events: none;
+            opacity: 0.15;
+            border: 1px solid #f4f0e6;
+            border-radius: 50%;
+        }
+        .vf-center::before, .vf-center::after {
+            content: ''; position: absolute; background: #f4f0e6;
+        }
+        .vf-center::before { top: 50%; left: -10px; right: -10px; height: 1px; transform: translateY(-50%); }
+        .vf-center::after { left: 50%; top: -10px; bottom: -10px; width: 1px; transform: translateX(-50%); }
+
+        /* Chart Elements */
+        .dot {
+            fill: #f4f0e6;
+            opacity: 0.4;
+            stroke: #0a0a0c;
+            stroke-width: 0.5px;
+            transition: opacity 0.2s, stroke 0.2s, stroke-width 0.2s;
+            cursor: crosshair;
+        }
+        .dot:hover, .dot.active {
+            opacity: 1;
+            fill: #e53935;
+            stroke: #f4f0e6;
+            stroke-width: 2px;
+        }
+        .axis-line line, .axis-line path { stroke: #2a2a2d; }
+        .axis-text text { fill: #a09d96; font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+        .grid-line line { stroke: #1a1a1d; stroke-dasharray: 2 4; }
+
+        /* Range Slider Styling */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+            height: 2px;
+        }
+        input[type=range]:focus { outline: none; }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 2px;
+            cursor: pointer; background: #2a2a2d;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            height: 12px; width: 12px;
+            border-radius: 50%;
+            background: #e53935;
+            cursor: pointer;
+            -webkit-appearance: none;
+            margin-top: -5px;
+        }
+
+        /* Image Fallback handling */
+        .poster-img {
+            background-color: var(--poster-fallback);
+            object-fit: cover;
+        }
+        
+        /* Animations */
+        @keyframes pulse-rec { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+        .animate-rec { animation: pulse-rec 2s infinite; }
+        
+        .fade-in { animation: fadeIn 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Hide app initially */
+        #app-content { display: none; }
+    </style>
+</head>
+<body class="antialiased font-body flex flex-col min-h-screen">
+    <div class="film-grain"></div>
+
+    <div id="gateway" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-cine-bg px-4 transition-opacity duration-700">
+        <div class="max-w-2xl text-center fade-in">
+            <h2 class="font-mono text-cine-textdim text-xs tracking-[0.3em] uppercase mb-4">Initialize Archive</h2>
+            <h1 class="font-headline text-6xl md:text-8xl tracking-wider text-cine-text mb-6">REEL<span class="text-cine-accent">ATLAS</span></h1>
+            <p class="text-cine-textdim text-sm md:text-base font-light max-w-lg mx-auto mb-12 leading-relaxed">
+                A cinematic visualization of the IMDb Top 1000 dataset. 
+                Loading the IMDb Top 1000 archive… If the dataset cannot be loaded automatically, you can choose the CSV manually.
+            </p>
+            
+            <label class="relative inline-flex items-center justify-center px-8 py-4 font-mono text-sm tracking-widest text-cine-text border border-cine-border bg-cine-surface hover:bg-cine-border hover:text-white transition-all cursor-pointer group overflow-hidden">
+                <span class="relative z-10 flex items-center gap-3">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                    LOAD CSV MANUALLY
+                </span>
+                <input type="file" id="csv-upload" accept=".csv" class="hidden">
+                <div class="absolute inset-0 bg-cine-accent transform scale-x-0 group-hover:scale-x-100 transition-transform origin-left duration-300 z-0 opacity-20"></div>
+            </label>
+            
+            <div id="loading-indicator" class="mt-8 hidden font-mono text-xs text-cine-accent animate-pulse tracking-widest">
+                PARSING DATASET...
+            </div>
+        </div>
+    </div>
+
+    <div id="app-content" class="flex-grow flex flex-col w-full max-w-[1600px] mx-auto opacity-0 transition-opacity duration-1000">
+        
+        <!-- Navigation -->
+        <nav class="sticky top-0 z-40 bg-cine-bg/90 backdrop-blur-md border-b border-cine-border px-6 py-4 flex justify-between items-center">
+            <div class="font-headline text-2xl tracking-wider">REEL<span class="text-cine-accent">ATLAS</span></div>
+            <div class="hidden md:flex gap-8 font-mono text-xs tracking-widest text-cine-textdim">
+                <a href="#hero" class="hover:text-cine-text transition-colors">OVERVIEW</a>
+                <a href="#camera" class="hover:text-cine-text transition-colors">THE ATLAS</a>
+                <a href="#directors" class="hover:text-cine-text transition-colors">DIRECTORS</a>
+                <a href="#films" class="hover:text-cine-text transition-colors">FILMS</a>
+            </div>
+        </nav>
+
+        <header id="hero" class="px-6 py-20 md:py-32 flex flex-col items-center text-center border-b border-cine-border relative overflow-hidden">
+            <!-- Subtle background elements -->
+            <div class="absolute top-0 left-0 w-full h-full pointer-events-none opacity-20 flex justify-between px-4">
+                <div class="w-px h-full bg-gradient-to-b from-transparent via-cine-border to-transparent"></div>
+                <div class="w-px h-full bg-gradient-to-b from-transparent via-cine-border to-transparent"></div>
+            </div>
+
+            <div class="font-mono text-xs tracking-[0.4em] text-cine-textdim uppercase mb-6 flex items-center gap-4">
+                <span class="w-8 h-px bg-cine-border"></span>
+                IMDb TOP 1000 · 2021 DATASET
+                <span class="w-8 h-px bg-cine-border"></span>
+            </div>
+            
+            <h1 class="font-display text-5xl md:text-7xl lg:text-8xl uppercase font-light tracking-tight mb-8">
+                Where stars meet <br><span class="text-cine-textdim italic font-serif">the crowd.</span>
+            </h1>
+            
+            <p class="font-body font-light text-cine-textdim max-w-2xl text-base md:text-lg mb-16">
+                A map of the IMDb Top 1000 — where audience attention, critical reception, and box-office success collide. Explore the archive through the lens of data.
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-16 w-full max-w-4xl border-t border-cine-border pt-12">
+                <div class="flex flex-col gap-1">
+                    <span id="stat-count" class="font-display text-4xl text-cine-text">0</span>
+                    <span class="font-mono text-[10px] tracking-widest text-cine-textdim uppercase">Films in View</span>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <span id="stat-avg" class="font-display text-4xl text-cine-text">0.0</span>
+                    <span class="font-mono text-[10px] tracking-widest text-cine-textdim uppercase">Average Rating</span>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <span id="stat-top" class="font-display text-2xl md:text-3xl text-cine-text truncate px-4" title="Loading...">...</span>
+                    <span class="font-mono text-[10px] tracking-widest text-cine-textdim uppercase">Highest Rated</span>
+                </div>
+            </div>
+        </header>
+
+        <section id="filters" class="px-6 py-8 border-b border-cine-border sticky top-[65px] bg-cine-bg/95 backdrop-blur-md z-30">
+            <!-- Genre Nav -->
+            <div class="flex overflow-x-auto pb-4 mb-4 border-b border-cine-border gap-2 hide-scrollbar" id="genre-container">
+                <!-- Genres injected here -->
+            </div>
+
+            <!-- Range Filters -->
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                <div class="font-mono text-xs tracking-widest text-cine-textdim flex items-center gap-2">
+                    <span class="w-2 h-2 bg-cine-accent rounded-full animate-rec inline-block"></span>
+                    <span id="active-filter-label">SHOWING ALL FILMS</span>
+                </div>
+                
+                <div class="flex flex-col md:flex-row gap-8 w-full md:w-auto">
+                    <!-- Year Filter -->
+                    <div class="flex flex-col gap-2 min-w-[200px]">
+                        <div class="flex justify-between font-mono text-[10px] text-cine-textdim uppercase tracking-wider">
+                            <span>From Year</span>
+                            <span id="year-val" class="text-cine-text">1920</span>
+                        </div>
+                        <input type="range" id="filter-year" min="1920" max="2021" step="1" value="1920">
+                    </div>
+                    
+                    <!-- Rating Filter -->
+                    <div class="flex flex-col gap-2 min-w-[200px]">
+                        <div class="flex justify-between font-mono text-[10px] text-cine-textdim uppercase tracking-wider">
+                            <span>Rating ≥</span>
+                            <span id="rating-val" class="text-cine-text">7.6</span>
+                        </div>
+                        <input type="range" id="filter-rating" min="7.6" max="10" step="0.1" value="7.6">
+                    </div>
+
+                    <button id="reset-filters" class="font-mono text-[10px] tracking-widest border border-cine-border px-4 py-2 hover:bg-cine-surface transition-colors mt-4 md:mt-0">
+                        RESET
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section id="camera" class="p-4 md:p-6 lg:p-12">
+            <div class="viewfinder-container w-full h-[60vh] md:h-[75vh] relative overflow-hidden" id="viz-container">
+                <!-- Camera UI Overlays -->
+                <div class="vf-corner vf-tl"></div>
+                <div class="vf-corner vf-tr"></div>
+                <div class="vf-corner vf-bl"></div>
+                <div class="vf-corner vf-br"></div>
+                <div class="vf-center"></div>
+                
+                <div class="absolute top-4 left-4 font-mono text-[10px] text-cine-textdim tracking-widest flex flex-col gap-1 z-10 pointer-events-none">
+                    <div class="flex items-center gap-2 text-cine-accent"><span class="w-2 h-2 bg-cine-accent rounded-full animate-rec"></span> REC</div>
+                    <div>ISO 800</div>
+                    <div>24 FPS</div>
+                </div>
+                
+                <div class="absolute bottom-4 right-4 font-mono text-[10px] text-cine-textdim tracking-widest text-right z-10 pointer-events-none">
+                    <div id="frame-counter">FRAME 001000</div>
+                    <div>REELATLAS / LENS 01</div>
+                </div>
+
+                <div class="absolute bottom-4 left-4 font-mono text-[10px] text-cine-textdim tracking-widest z-10 pointer-events-none">
+                    X: LOG(VOTES) · Y: RATING · SIZE: GROSS
+                </div>
+
+                <!-- D3 SVG Container -->
+                <div id="d3-chart" class="w-full h-full absolute inset-0"></div>
+            </div>
+            
+            <!-- Tooltip -->
+            <div id="cine-tooltip"></div>
+        </section>
+
+        <section id="insights" class="px-6 py-12 border-b border-cine-border bg-cine-surface">
+            <h2 class="font-mono text-xs tracking-widest text-cine-textdim mb-8">KEY OBSERVATIONS</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8" id="insights-container">
+                <!-- Insights generated dynamically -->
+            </div>
+        </section>
+
+        <section id="directors" class="px-6 py-20 border-b border-cine-border">
+            <div class="mb-12">
+                <span class="font-mono text-xs tracking-widest text-cine-accent mb-2 block">02 / THE DIRECTORS</span>
+                <h2 class="font-display text-4xl md:text-5xl uppercase tracking-tight mb-4">The filmmakers behind the classics.</h2>
+                <p class="font-body text-cine-textdim max-w-2xl">A look at the directors who appear most often in the current selection, ranked by volume of acclaimed work.</p>
+            </div>
+
+            <!-- Director Bar Chart & Cards -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-12">
+                <!-- Visual Ranking -->
+                <div class="lg:col-span-5 font-mono text-sm" id="director-bars">
+                    <!-- Populated by JS -->
+                </div>
+                
+                <!-- Director Cards -->
+                <div class="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-6" id="director-cards">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </section>
+
+        <section id="films" class="px-6 py-20 border-b border-cine-border">
+            <div class="mb-12 flex flex-col md:flex-row md:justify-between md:items-end gap-6">
+                <div>
+                    <span class="font-mono text-xs tracking-widest text-cine-accent mb-2 block">03 / THE FILMS</span>
+                    <h2 class="font-display text-4xl md:text-5xl uppercase tracking-tight mb-4">The Hall of Fame</h2>
+                    <p class="font-body text-cine-textdim max-w-2xl">The highest-rated films in the current selection.</p>
+                </div>
+                <div class="font-mono text-xs text-cine-textdim tracking-widest">RANKED BY IMDB RATING</div>
+            </div>
+
+            <div id="top-films-container" class="flex flex-col gap-12">
+                <!-- Top 3 Masonry/Hero -->
+                <div id="top-3-grid" class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <!-- JS fills this. 1st gets col-span-2 -->
+                </div>
+                
+                <!-- 4-10 Film Strip -->
+                <div class="overflow-x-auto hide-scrollbar pb-8">
+                    <div id="film-strip" class="flex gap-6 min-w-max">
+                         <!-- JS fills this -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <footer class="px-6 py-12 flex flex-col md:flex-row justify-between items-center gap-6 text-cine-textdim font-mono text-xs tracking-widest">
+            <div class="flex items-center gap-4">
+                <span class="text-cine-text font-bold">REELATLAS</span>
+                <span class="w-px h-4 bg-cine-border"></span>
+                <span>SOURCE: IMDB TOP 1000 CSV</span>
+            </div>
+            <div>BUILT FOR CURIOUS MOVIE NIGHTS.</div>
+        </footer>
+
+    </div>
+
+    <script>
+        // State
+        let allData = [];
+        let filteredData = [];
+        let activeGenre = 'ALL';
+        
+        // Formatter helpers
+        const formatMoney = d3.format("$,.0f");
+        const formatVotes = d3.format(",.0f");
+        const formatShortMoney = d => {
+            if (!d) return '—';
+            if (d >= 1e9) return `$${(d / 1e9).toFixed(2)}B`;
+            if (d >= 1e6) return `$${(d / 1e6).toFixed(1)}M`;
+            return formatMoney(d);
+        };
+        const formatShortVotes = d => {
+            if (d >= 1e6) return `${(d / 1e6).toFixed(1)}M`;
+            if (d >= 1e3) return `${(d / 1e3).toFixed(0)}K`;
+            return d;
+        };
+
+        // Dataset loading
+        // GitHub Pages serves this HTML and CSV from the same folder.
+        // Load the CSV automatically so the published page behaves like a normal website.
+        let appInitialized = false;
+
+        function revealApp() {
+            if (appInitialized) return;
+            appInitialized = true;
+
+            document.getElementById('gateway').style.opacity = 0;
+            setTimeout(() => {
+                document.getElementById('gateway').style.display = 'none';
+                const app = document.getElementById('app-content');
+                app.style.display = 'flex';
+                setTimeout(() => app.style.opacity = 1, 50);
+                initApp();
+            }, 500);
+        }
+
+        function loadCsvText(csvData) {
+            try {
+                processData(csvData);
+                revealApp();
+            } catch (error) {
+                console.error("Data parsing error:", error);
+                document.getElementById('loading-indicator').innerText =
+                    "ERROR PARSING DATASET — USE THE MANUAL CSV UPLOAD";
+                document.getElementById('loading-indicator').classList.remove('hidden');
+                document.getElementById('csv-upload').parentElement.classList.remove('opacity-50');
+            }
+        }
+
+        // Automatic hosted-site loading.
+        // IMPORTANT: upload the CSV to GitHub with this exact filename:
+        // imdb_top_1000.csv
+        async function loadHostedDataset() {
+            const indicator = document.getElementById('loading-indicator');
+            indicator.classList.remove('hidden');
+            indicator.innerText = 'LOADING DATASET...';
+
+            try {
+                const response = await fetch('./imdb_top_1000.csv', { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const csvData = await response.text();
+                if (!csvData.trim()) throw new Error('Empty CSV');
+                loadCsvText(csvData);
+            } catch (error) {
+                console.error('Automatic CSV load failed:', error);
+                indicator.innerText = 'DATASET NOT FOUND — LOAD CSV MANUALLY';
+                // Keep the manual upload gateway visible as a fallback.
+            }
+        }
+
+        // Manual upload fallback.
+        document.getElementById('csv-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            document.getElementById('loading-indicator').classList.remove('hidden');
+            document.getElementById('loading-indicator').innerText = 'PARSING DATASET...';
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                loadCsvText(event.target.result);
+            };
+            reader.onerror = function() {
+                document.getElementById('loading-indicator').innerText = 'ERROR READING CSV FILE';
+            };
+            reader.readAsText(file);
+        });
+
+        // Start automatically when hosted on GitHub Pages or another web server.
+        document.addEventListener('DOMContentLoaded', loadHostedDataset);
+
+        function processData(rawCsv) {
+            const parsed = d3.csvParse(rawCsv);
+            
+            allData = parsed.map(d => {
+                // Clean strings to numbers
+                const yearMatch = d.Released_Year ? d.Released_Year.toString().match(/\d{4}/) : null;
+                const year = yearMatch ? parseInt(yearMatch[0]) : null;
+                
+                let grossStr = d.Gross ? d.Gross.replace(/[\$,]/g, '') : '';
+                const gross = grossStr ? parseFloat(grossStr) : null;
+                
+                const genres = d.Genre ? d.Genre.split(',').map(g => g.trim()) : [];
+
+                return {
+                    id: d.Series_Title + year,
+                    title: d.Series_Title,
+                    poster: d.Poster_Link,
+                    year: year,
+                    rating: parseFloat(d.IMDB_Rating) || 0,
+                    votes: parseFloat(d.No_of_Votes) || 0,
+                    gross: gross,
+                    director: d.Director ? d.Director.trim() : "Unknown",
+                    genres: genres,
+                    certificate: d.Certificate || "U/A",
+                    runtime: d.Runtime || ""
+                };
+            }).filter(d => d.title && d.year && d.rating > 0 && d.votes > 0); // Remove essentially broken rows
+
+            // Setup Filter Bounds
+            const minYearInD = d3.min(allData, d => d.year);
+            const maxYearInD = d3.max(allData, d => d.year);
+            const minRatingInD = d3.min(allData, d => d.rating);
+            
+            const yrSlider = document.getElementById('filter-year');
+            yrSlider.min = minYearInD; yrSlider.max = maxYearInD; yrSlider.value = minYearInD;
+            document.getElementById('year-val').innerText = minYearInD;
+
+            const rtSlider = document.getElementById('filter-rating');
+            rtSlider.min = minRatingInD; rtSlider.value = minRatingInD;
+            document.getElementById('rating-val').innerText = minRatingInD;
+
+            extractGenres();
+            filteredData = [...allData];
+        }
+
+        function extractGenres() {
+            const genreSet = new Set();
+            allData.forEach(d => d.genres.forEach(g => genreSet.add(g)));
+            const sortedGenres = Array.from(genreSet).sort();
+            
+            const container = document.getElementById('genre-container');
+            container.innerHTML = '';
+            
+            // Add 'ALL' button
+            container.appendChild(createGenreBtn('ALL', true));
+            
+            sortedGenres.forEach(g => {
+                container.appendChild(createGenreBtn(g, false));
+            });
+        }
+
+        function createGenreBtn(name, isActive) {
+            const btn = document.createElement('button');
+            btn.className = `whitespace-nowrap px-4 py-2 text-xs font-mono tracking-widest border transition-colors rounded-sm ${isActive ? 'bg-cine-text text-cine-bg border-cine-text active-genre' : 'bg-transparent text-cine-textdim border-cine-border hover:border-cine-textdim'}`;
+            btn.innerText = name;
+            btn.onclick = () => {
+                // UI Toggle
+                document.querySelectorAll('#genre-container button').forEach(b => {
+                    b.className = 'whitespace-nowrap px-4 py-2 text-xs font-mono tracking-widest border transition-colors rounded-sm bg-transparent text-cine-textdim border-cine-border hover:border-cine-textdim';
+                });
+                btn.className = 'whitespace-nowrap px-4 py-2 text-xs font-mono tracking-widest border transition-colors rounded-sm bg-cine-text text-cine-bg border-cine-text active-genre';
+                
+                activeGenre = name;
+                applyFilters();
+            };
+            return btn;
+        }
+
+        function initApp() {
+            // Event Listeners for Sliders
+            document.getElementById('filter-year').addEventListener('input', e => {
+                document.getElementById('year-val').innerText = e.target.value;
+                applyFilters();
+            });
+            document.getElementById('filter-rating').addEventListener('input', e => {
+                document.getElementById('rating-val').innerText = e.target.value;
+                applyFilters();
+            });
+            document.getElementById('reset-filters').addEventListener('click', () => {
+                document.getElementById('filter-year').value = document.getElementById('filter-year').min;
+                document.getElementById('year-val').innerText = document.getElementById('filter-year').min;
+                document.getElementById('filter-rating').value = document.getElementById('filter-rating').min;
+                document.getElementById('rating-val').innerText = document.getElementById('filter-rating').min;
+                document.querySelector('#genre-container button').click(); // Clicks ALL
+                // applyFilters is called by genre click
+            });
+
+            // Handle window resize for D3 chart
+            window.addEventListener('resize', debounce(() => {
+                if(filteredData.length > 0) drawScatterplot();
+            }, 250));
+
+            applyFilters(); // Initial render
+        }
+
+        function applyFilters() {
+            const minYear = parseInt(document.getElementById('filter-year').value);
+            const minRating = parseFloat(document.getElementById('filter-rating').value);
+
+            filteredData = allData.filter(d => {
+                const passGenre = activeGenre === 'ALL' || d.genres.includes(activeGenre);
+                const passYear = d.year >= minYear;
+                const passRating = d.rating >= minRating;
+                return passGenre && passYear && passRating;
+            });
+
+            updateUI();
+        }
+
+        function updateUI() {
+            // Label update
+            document.getElementById('active-filter-label').innerText = `SHOWING ${filteredData.length} ${activeGenre === 'ALL' ? '' : activeGenre.toUpperCase() + ' '}FILMS`;
+            
+            // Frame counter aesthetic
+            document.getElementById('frame-counter').innerText = `FRAME ${filteredData.length.toString().padStart(6, '0')}`;
+
+            renderHero();
+            drawScatterplot();
+            renderInsights();
+            renderDirectors();
+            renderFilms();
+        }
+
+        function renderHero() {
+            document.getElementById('stat-count').innerText = filteredData.length;
+            
+            if (filteredData.length === 0) {
+                document.getElementById('stat-avg').innerText = '0.0';
+                document.getElementById('stat-top').innerText = '—';
+                return;
+            }
+
+            const avg = d3.mean(filteredData, d => d.rating).toFixed(2);
+            document.getElementById('stat-avg').innerText = avg;
+
+            const topFilm = filteredData.reduce((prev, current) => (prev.rating > current.rating) ? prev : current);
+            document.getElementById('stat-top').innerText = topFilm.title;
+            document.getElementById('stat-top').title = topFilm.title;
+        }
+
+        function renderInsights() {
+            const container = document.getElementById('insights-container');
+            container.innerHTML = '';
+
+            if (filteredData.length === 0) {
+                container.innerHTML = '<div class="text-cine-textdim font-mono text-sm">No data available for current selection.</div>';
+                return;
+            }
+
+            // Insight 1: Most represented director
+            const dirCounts = d3.rollups(filteredData, v => v.length, d => d.director)
+                                .sort((a, b) => b[1] - a[1]);
+            const topDir = dirCounts[0];
+            
+            // Insight 2: Highest Grossing
+            const withGross = filteredData.filter(d => d.gross);
+            let topGross = null;
+            if (withGross.length > 0) {
+                topGross = withGross.reduce((prev, current) => (prev.gross > current.gross) ? prev : current);
+            }
+
+            // Insight 3: Most Votes
+            const topVotes = filteredData.reduce((prev, current) => (prev.votes > current.votes) ? prev : current);
+
+            const insights = [
+                {
+                    label: "01 / FREQUENT CONTRIBUTOR",
+                    title: topDir[0],
+                    desc: `The most represented director in this view, holding ${topDir[1]} spots in the archive.`
+                },
+                {
+                    label: "02 / COMMERCIAL APEX",
+                    title: topGross ? topGross.title : "N/A",
+                    desc: topGross ? `The highest-grossing film selected, earning ${formatShortMoney(topGross.gross)} globally.` : "Box office data unavailable for selection."
+                },
+                {
+                    label: "03 / CROWD CONSENSUS",
+                    title: topVotes.title,
+                    desc: `Commanding the largest audience with ${formatShortVotes(topVotes.votes)} IMDb votes.`
+                }
+            ];
+
+            insights.forEach(ins => {
+                container.innerHTML += `
+                    <div class="border-t border-cine-border pt-4">
+                        <span class="font-mono text-[10px] tracking-widest text-cine-accent mb-2 block">${ins.label}</span>
+                        <h3 class="font-display text-2xl uppercase tracking-tight mb-2 text-cine-text truncate" title="${ins.title}">${ins.title}</h3>
+                        <p class="font-body font-light text-sm text-cine-textdim">${ins.desc}</p>
+                    </div>
+                `;
+            });
+        }
+
+        function renderDirectors() {
+            const barContainer = document.getElementById('director-bars');
+            const cardContainer = document.getElementById('director-cards');
+            barContainer.innerHTML = '';
+            cardContainer.innerHTML = '';
+
+            if (filteredData.length === 0) return;
+
+            // Group and calculate metrics
+            const dirMap = d3.rollup(filteredData, 
+                v => {
+                    const highestRated = v.reduce((p, c) => (p.rating > c.rating) ? p : c);
+                    const withGross = v.filter(d => d.gross);
+                    const highestGrossing = withGross.length > 0 ? withGross.reduce((p, c) => (p.gross > c.gross) ? p : c) : null;
+                    return {
+                        count: v.length,
+                        avgRating: d3.mean(v, d => d.rating),
+                        highestRated: highestRated,
+                        highestGrossing: highestGrossing
+                    };
+                }, 
+                d => d.director
+            );
+
+            // Sort: Count DESC, Avg Rating DESC. Take top 10.
+            const topDirectors = Array.from(dirMap, ([name, value]) => ({ name, ...value }))
+                                      .sort((a, b) => b.count - a.count || b.avgRating - a.avgRating)
+                                      .slice(0, 10);
+
+            if (topDirectors.length === 0) return;
+            const maxCount = topDirectors[0].count;
+
+            // Build Visual Bars
+            topDirectors.forEach((dir, index) => {
+                const rankStr = (index + 1).toString().padStart(2, '0');
+                const barWidth = (dir.count / maxCount) * 100;
+                
+                // Bar HTML
+                const barHtml = `
+                    <div class="mb-4 group cursor-pointer" onmouseover="highlightDirCard(${index})" onmouseout="resetDirCards()">
+                        <div class="flex justify-between items-baseline mb-1">
+                            <span class="text-cine-textdim group-hover:text-cine-text transition-colors"><span class="text-cine-accent mr-2">${rankStr}</span> ${dir.name}</span>
+                            <span class="text-cine-textdim">${dir.count} FILMS</span>
+                        </div>
+                        <div class="w-full bg-cine-border h-1.5 relative overflow-hidden">
+                            <div class="absolute top-0 left-0 h-full bg-cine-accent transform origin-left transition-transform duration-700 ease-out" style="width: ${barWidth}%"></div>
+                        </div>
+                    </div>
+                `;
+                barContainer.insertAdjacentHTML('beforeend', barHtml);
+
+                // Card HTML
+                const cardHtml = `
+                    <div class="dir-card border border-cine-border bg-cine-surface p-4 flex gap-4 transition-all duration-300" id="dir-card-${index}">
+                        <img src="${dir.highestRated.poster}" alt="${dir.highestRated.title}" class="w-20 h-28 object-cover poster-img rounded-sm shadow-md" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'100\\' height=\\'140\\' fill=\\'%231a1a1d\\'%3E%3Crect width=\\'100\\' height=\\'140\\'/%3E%3Ctext x=\\'50\\' y=\\'70\\' fill=\\'%232a2a2d\\' font-family=\\'sans-serif\\' font-size=\\'10\\' text-anchor=\\'middle\\'%3EPOSTER%3C/text%3E%3C/svg%3E'">
+                        <div class="flex flex-col justify-between overflow-hidden">
+                            <div>
+                                <div class="font-mono text-[10px] text-cine-accent tracking-widest mb-1">RANK ${rankStr}</div>
+                                <h4 class="font-display text-xl leading-none uppercase truncate" title="${dir.name}">${dir.name}</h4>
+                                <div class="font-mono text-[10px] text-cine-textdim mt-1">${dir.avgRating.toFixed(2)} AVG RATING</div>
+                            </div>
+                            <div class="mt-2">
+                                <div class="font-mono text-[9px] text-cine-textdim tracking-widest uppercase">Highest Rated</div>
+                                <div class="text-xs truncate text-cine-text" title="${dir.highestRated.title}">${dir.highestRated.title} <span class="text-cine-gold">★${dir.highestRated.rating}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                cardContainer.insertAdjacentHTML('beforeend', cardHtml);
+            });
+        }
+
+        // Global functions for inline HTML events
+        window.highlightDirCard = (index) => {
+            document.querySelectorAll('.dir-card').forEach((el, i) => {
+                if (i === index) {
+                    el.classList.add('border-cine-accent', 'shadow-[0_0_15px_rgba(229,57,53,0.2)]');
+                } else {
+                    el.style.opacity = '0.4';
+                }
+            });
+        };
+        window.resetDirCards = () => {
+            document.querySelectorAll('.dir-card').forEach(el => {
+                el.classList.remove('border-cine-accent', 'shadow-[0_0_15px_rgba(229,57,53,0.2)]');
+                el.style.opacity = '1';
+            });
+        };
+
+        function renderFilms() {
+            const grid = document.getElementById('top-3-grid');
+            const strip = document.getElementById('film-strip');
+            grid.innerHTML = '';
+            strip.innerHTML = '';
+
+            if (filteredData.length === 0) return;
+
+            // Sort: Rating DESC, Votes DESC
+            const sortedFilms = [...filteredData].sort((a, b) => b.rating - a.rating || b.votes - a.votes).slice(0, 10);
+
+            sortedFilms.forEach((film, index) => {
+                const rank = (index + 1).toString().padStart(2, '0');
+                const imgFallback = `this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'200\\' height=\\'300\\' fill=\\'%231a1a1d\\'%3E%3Crect width=\\'200\\' height=\\'300\\'/%3E%3Ctext x=\\'100\\' y=\\'150\\' fill=\\'%232a2a2d\\' font-family=\\'sans-serif\\' font-size=\\'14\\' text-anchor=\\'middle\\'%3ENO POSTER%3C/text%3E%3C/svg%3E'`;
+
+                if (index < 3) {
+                    // Top 3 Layout
+                    const isFirst = index === 0;
+                    const colSpan = isFirst ? 'md:col-span-2' : 'md:col-span-1';
+                    
+                    const html = `
+                        <div class="relative group overflow-hidden bg-cine-surface border border-cine-border flex flex-col h-full ${colSpan}">
+                            <div class="absolute top-0 left-0 bg-cine-accent text-white font-headline text-2xl md:text-4xl px-3 md:px-4 py-1 z-10 shadow-lg">${rank}</div>
+                            <div class="w-full h-64 ${isFirst ? 'md:h-96' : 'md:h-96'} relative overflow-hidden">
+                                <img src="${film.poster}" onerror="${imgFallback}" alt="${film.title}" class="w-full h-full object-cover poster-img transform group-hover:scale-105 transition-transform duration-700">
+                                <div class="absolute inset-0 bg-gradient-to-t from-cine-bg via-transparent to-transparent"></div>
+                            </div>
+                            <div class="p-4 md:p-6 flex flex-col flex-grow justify-end -mt-16 z-10 relative">
+                                <div class="font-mono text-xs text-cine-gold mb-1">★ ${film.rating.toFixed(1)} · ${formatShortVotes(film.votes)} VOTES</div>
+                                <h3 class="font-display text-2xl md:text-3xl lg:text-4xl uppercase leading-none mb-1 text-shadow-cine truncate" title="${film.title}">${film.title}</h3>
+                                <div class="font-mono text-[10px] text-cine-textdim tracking-widest">${film.year} · DIR. ${film.director.toUpperCase()}</div>
+                            </div>
+                        </div>
+                    `;
+                    grid.insertAdjacentHTML('beforeend', html);
+                } else {
+                    // 4-10 Strip Layout
+                    const html = `
+                        <div class="w-40 flex-shrink-0 group">
+                            <div class="relative w-full h-60 mb-3 border border-cine-border overflow-hidden">
+                                <div class="absolute top-2 left-2 bg-cine-bg/90 backdrop-blur border border-cine-border text-cine-text font-mono text-[10px] px-2 py-0.5 z-10">${rank}</div>
+                                <img src="${film.poster}" onerror="${imgFallback}" alt="${film.title}" class="w-full h-full object-cover poster-img transform group-hover:scale-105 transition-transform duration-500 opacity-80 group-hover:opacity-100">
+                            </div>
+                            <h4 class="font-display text-lg leading-tight uppercase truncate" title="${film.title}">${film.title}</h4>
+                            <div class="font-mono text-[10px] text-cine-gold">★ ${film.rating.toFixed(1)}</div>
+                        </div>
+                    `;
+                    strip.insertAdjacentHTML('beforeend', html);
+                }
+            });
+        }
+
+        let svg, g, xAxis, yAxis, xScale, yScale, rScale;
+        
+        function drawScatterplot() {
+            const container = document.getElementById('viz-container');
+            const tooltip = d3.select("#cine-tooltip");
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            
+            // Adjust margins to keep dots away from camera UI edges
+            const margin = {top: 60, right: 60, bottom: 60, left: 80};
+            const innerWidth = width - margin.left - margin.right;
+            const innerHeight = height - margin.top - margin.bottom;
+
+            if (!svg) {
+                // Initialize SVG on first run
+                svg = d3.select("#d3-chart")
+                    .append("svg")
+                    .attr("width", "100%")
+                    .attr("height", "100%")
+                    .attr("viewBox", `0 0 ${width} ${height}`)
+                    .attr("preserveAspectRatio", "xMidYMid meet");
+                
+                g = svg.append("g")
+                    .attr("transform", `translate(${margin.left},${margin.top})`);
+                
+                // Add Gridlines grouping
+                g.append("g").attr("class", "grid-y grid-line");
+                g.append("g").attr("class", "grid-x grid-line");
+
+                // Add axes grouping
+                g.append("g").attr("class", "x-axis axis-line axis-text").attr("transform", `translate(0,${innerHeight})`);
+                g.append("g").attr("class", "y-axis axis-line axis-text");
+
+                // Dots grouping
+                g.append("g").attr("class", "dots-layer");
+            } else {
+                // Update SVG viewBox on resize
+                svg.attr("viewBox", `0 0 ${width} ${height}`);
+                g.select(".x-axis").attr("transform", `translate(0,${innerHeight})`);
+            }
+
+            if (filteredData.length === 0) {
+                 g.select(".dots-layer").selectAll("circle").remove();
+                 return;
+            }
+
+            // Scales
+            // Votes: Use Log scale since votes vary from 25k to 2.3M
+            const minVotes = d3.min(filteredData, d => d.votes) || 25000;
+            const maxVotes = d3.max(filteredData, d => d.votes) || 1;
+            xScale = d3.scaleLog()
+                .domain([minVotes * 0.8, maxVotes * 1.2]) // Add padding
+                .range([0, innerWidth]);
+
+            // Rating: Linear scale
+            const minRating = d3.min(filteredData, d => d.rating) || 7.5;
+            const maxRating = d3.max(filteredData, d => d.rating) || 10;
+            yScale = d3.scaleLinear()
+                .domain([minRating - 0.1, maxRating + 0.1])
+                .range([innerHeight, 0]);
+
+            // Radius: Gross Revenue (Sqrt scale for area). 
+            // Fallback for missing gross is a small default size.
+            const maxGross = d3.max(filteredData, d => d.gross) || 1;
+            rScale = d3.scaleSqrt()
+                .domain([0, maxGross])
+                .range([3, 20]); // min 3px radius, max 20px
+
+            // Gridlines
+            const yAxisGrid = d3.axisLeft(yScale).tickSize(-innerWidth).tickFormat('').ticks(5);
+            g.select(".grid-y").call(yAxisGrid);
+            
+            // X and Y Axes setup
+            const xAxisCall = d3.axisBottom(xScale).ticks(5, "~s"); // ~s formats log scale nicely (e.g. 1M)
+            const yAxisCall = d3.axisLeft(yScale).ticks(5);
+
+            g.select(".x-axis").transition().duration(700).call(xAxisCall);
+            g.select(".y-axis").transition().duration(700).call(yAxisCall);
+
+            // Clean up domain paths for axes to look more cinematic
+            g.selectAll(".domain").style("stroke", "#2a2a2d");
+
+            // Data Join
+            const circles = g.select(".dots-layer").selectAll("circle")
+                .data(filteredData, d => d.id);
+
+            // Exit
+            circles.exit()
+                .transition().duration(400)
+                .attr("r", 0)
+                .style("opacity", 0)
+                .remove();
+
+            // Enter
+            const circlesEnter = circles.enter()
+                .append("circle")
+                .attr("class", "dot")
+                .attr("cx", d => xScale(d.votes))
+                .attr("cy", innerHeight) // Start from bottom
+                .attr("r", 0);
+            
+            // Interaction logic attached to Enter + Update
+            circlesEnter.merge(circles)
+                .on("mouseover", function(event, d) {
+                    d3.select(this).classed("active", true).raise(); // Bring to front
+                    
+                    // Construct tooltip content
+                    const tooltipHtml = `
+                        <div class="flex gap-4">
+                            <img src="${d.poster}" class="w-16 h-24 object-cover poster-img border border-cine-border" onerror="this.style.display='none'">
+                            <div class="flex flex-col justify-center">
+                                <div class="font-mono text-[9px] text-cine-textdim tracking-widest mb-1">${d.year} · DIR. ${d.director.toUpperCase()}</div>
+                                <div class="font-display text-xl uppercase leading-none mb-2">${d.title}</div>
+                                <div class="flex gap-3 font-mono text-[10px]">
+                                    <span class="text-cine-gold">★ ${d.rating.toFixed(1)}</span>
+                                    <span class="text-cine-textdim">${formatShortVotes(d.votes)} V</span>
+                                    <span class="text-cine-accent">${d.gross ? formatShortMoney(d.gross) : 'NO DATA'}</span>
+                                </div>
+                                <div class="mt-2 text-[9px] text-cine-textdim uppercase tracking-wider">${d.genres.join(' · ')}</div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    tooltip.html(tooltipHtml)
+                        .style("left", (event.pageX) + "px")
+                        .style("top", (event.pageY - 20) + "px")
+                        .style("opacity", 1);
+                })
+                .on("mousemove", function(event) {
+                    // Keep tooltip near cursor but prevent off-screen
+                    let x = event.pageX;
+                    let y = event.pageY - 20;
+                    
+                    // Simple boundary check (assuming tooltip ~300px wide)
+                    if (x > window.innerWidth - 150) x = window.innerWidth - 150;
+                    if (x < 150) x = 150;
+                    
+                    tooltip.style("left", x + "px").style("top", y + "px");
+                })
+                .on("mouseout", function() {
+                    d3.select(this).classed("active", false);
+                    tooltip.style("opacity", 0);
+                })
+                // Update Transitions
+                .transition().duration(800).delay((d,i) => i % 50 * 5) // Staggered delay for cool effect
+                .attr("cx", d => xScale(d.votes))
+                .attr("cy", d => yScale(d.rating))
+                .attr("r", d => d.gross ? rScale(d.gross) : 3); // Fallback radius of 3 for missing gross
+        }
+
+        // Utility: Debounce function for resize events
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+    </script>
+</body>
+</html>
